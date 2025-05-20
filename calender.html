@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calendar Push Table</title>
+  <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css">
+</head>
+<body class="bg-light p-5">
+  <div class="container">
+    <h3 class="mb-4">Assignment Table with Calendar Push</h3>
+    <table id="manageRequestsGrid" class="table table-bordered">
+      <thead class="table-dark text-center">
+        <tr>
+          <th>MDA</th>
+          <th>Tracking Number</th>
+          <th>Request Type</th>
+          <th>Status</th>
+          <th>Start Date</th>
+          <th>End Date</th>
+          <th>Priority Level</th>
+          <th>Comments</th>
+          <th>Assignee</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody class="text-center align-middle">
+        <tr>
+          <td>Ministry of Finance</td>
+          <td>TRACK-SUB-001</td>
+          <td>Establishment Request</td>
+          <td>Submitted</td>
+          <td>2025-04-20</td>
+          <td>2025-05-20</td>
+          <td>High</td>
+          <td>Initial submission for new department.</td>
+          <td>John Doe</td>
+          <td class="action-cell"></td>
+        </tr>
+        <tr>
+          <td>Ministry of Health</td>
+          <td>TRACK-PEN-002</td>
+          <td>Job Evaluation</td>
+          <td>Pending</td>
+          <td>2025-04-25</td>
+          <td>2025-05-25</td>
+          <td>Medium</td>
+          <td>Awaiting feedback from HR.</td>
+          <td>Jane Smith</td>
+          <td class="action-cell"></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <button id="pushToCalendarBtn" class="btn btn-primary mt-3">Push Assignees to Calendar</button>
+  </div>
+
+  <script>
+    document.getElementById('pushToCalendarBtn').addEventListener('click', async () => {
+      const msalConfig = {
+        auth: {
+          clientId: "c5fa69f9-e465-431d-8f24-398f1e882700",
+          authority: "https://login.microsoftonline.com/common",
+          redirectUri: "http://localhost:5500/ati-email-app/index.html"
+        }
+      };
+
+      const msalInstance = new msal.PublicClientApplication(msalConfig);
+      let currentAccount = null;
+
+      try {
+        const accounts = msalInstance.getAllAccounts();
+        if (accounts.length === 0) {
+          const loginResp = await msalInstance.loginPopup({ scopes: ["Calendars.ReadWrite"] });
+          currentAccount = loginResp.account;
+        } else {
+          currentAccount = accounts[0];
+        }
+
+        let tokenResp;
+        try {
+          tokenResp = await msalInstance.acquireTokenSilent({
+            scopes: ["Calendars.ReadWrite"],
+            account: currentAccount
+          });
+        } catch {
+          tokenResp = await msalInstance.acquireTokenPopup({ scopes: ["Calendars.ReadWrite"] });
+        }
+
+        const token = tokenResp.accessToken;
+        const tableRows = document.querySelectorAll('#manageRequestsGrid tbody tr');
+        const createdSubjects = new Set();
+
+        for (const row of tableRows) {
+          const cells = row.querySelectorAll('td');
+          if (cells.length < 10) continue;
+
+          const assigneeName = cells[8].textContent.trim();
+          const requestType = cells[2].textContent.trim();
+          const startDate = cells[4].textContent.trim();
+          const endDate = cells[5].textContent.trim();
+          const actionCell = row.querySelector('.action-cell');
+
+          const eventKey = `${assigneeName}-${requestType}-${startDate}`;
+          if (createdSubjects.has(eventKey)) {
+            actionCell.innerHTML = '<span class="badge text-bg-warning">Duplicate Skipped</span>';
+            continue;
+          }
+          createdSubjects.add(eventKey);
+
+          const email = assigneeName.toLowerCase().replace(/\s+/g, '.') + "@example.com";
+
+          const event = {
+            subject: `New Assignment: ${requestType}`,
+            start: {
+              dateTime: `${startDate}T09:00:00`,
+              timeZone: "America/Jamaica"
+            },
+            end: {
+              dateTime: `${endDate}T17:00:00`,
+              timeZone: "America/Jamaica"
+            },
+            attendees: [
+              {
+                emailAddress: {
+                  address: email,
+                  name: assigneeName
+                },
+                type: "required"
+              }
+            ]
+          };
+
+          try {
+            await fetch("https://graph.microsoft.com/v1.0/me/events", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(event)
+            });
+
+            actionCell.innerHTML = '<span class="badge text-bg-success">Pushed</span>';
+          } catch (err) {
+            actionCell.innerHTML = '<span class="badge text-bg-danger">Error</span>';
+            console.error("Failed to create event:", err);
+          }
+        }
+
+        alert("Finished pushing assignments to Outlook Calendar.");
+      } catch (err) {
+        console.error("Error during calendar push:", err);
+        alert("Calendar push failed. See console for details.");
+      }
+    });
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
